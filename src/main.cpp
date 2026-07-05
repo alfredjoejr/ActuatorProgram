@@ -7,6 +7,7 @@
 #include "mode_handler.h"
 #include "servo_controller.h"
 #include "servo_config.h"
+#include "racing_stepper.h"
 
 // ==================== GLOBALS ====================
 unsigned long lastStatusUpdate = 0;
@@ -16,6 +17,7 @@ const unsigned long STATUS_UPDATE_INTERVAL = 100;  // 100ms
 void processCommand();
 void processModeCommand(const char* cmdBuffer);
 void processServoCommand(const char* cmdBuffer);
+void processStepperCommand(const char* cmdBuffer);
 void sendPeriodicStatus();
 
 // ==================== SETUP ====================
@@ -29,6 +31,9 @@ void setup() {
     
     // Initialize servo controller
     ServoController::init();
+
+    // Initialize racing stepper controller
+    RacingStepper::init();
     
     delay(500);
     
@@ -41,6 +46,9 @@ void setup() {
 void loop() {
     // Update servo positions (smooth movement interpolation)
     ServoController::update();
+
+    // Update racing stepper pulses
+    RacingStepper::update();
     
     // Check for mode timeout
     ModeManager::checkTimeout();
@@ -73,6 +81,8 @@ void processCommand() {
         processModeCommand(cmdBuffer);
     } else if (cmdType == CMD_SERVO) {
         processServoCommand(cmdBuffer);
+    } else if (cmdType == CMD_STEPPER) {
+        processStepperCommand(cmdBuffer);
     } else {
         ResponseBuilder::sendError(ERR_COMM_UNKNOWN_COMMAND, "Unknown command type");
     }
@@ -115,12 +125,18 @@ void processModeCommand(const char* cmdBuffer) {
             break;
             
         case MODE_CMD_STOP:
-            ModeHandler::onModeStop(ModeManager::getMode());
             if (!ModeManager::stopMode()) {
                 ResponseBuilder::sendError(ERR_MODE_INVALID_TRANSITION, "Cannot stop in current state");
                 return;
             }
-            ServoController::moveToNeutral();
+            ResponseBuilder::sendStatus(ModeManager::getMode(), ModeManager::getState());
+            break;
+
+        case MODE_CMD_RESET:
+            if (!ModeManager::resetToIdle()) {
+                ResponseBuilder::sendError(ERR_MODE_INVALID_TRANSITION, "Can only reset from STOPPED state");
+                return;
+            }
             ResponseBuilder::sendStatus(ModeManager::getMode(), ModeManager::getState());
             break;
             
@@ -162,6 +178,34 @@ void processServoCommand(const char* cmdBuffer) {
     ModeManager::updateCommandTime();
     
     // Send confirmation
+    ResponseBuilder::sendOK();
+}
+
+void processStepperCommand(const char* cmdBuffer) {
+    StepperCommand stepperCmd;
+
+    char tempBuffer[SERIAL_BUFFER_SIZE];
+    strncpy(tempBuffer, cmdBuffer, SERIAL_BUFFER_SIZE - 1);
+    tempBuffer[SERIAL_BUFFER_SIZE - 1] = '\0';
+
+    if (!SerialHandler::parseStepperCommand(tempBuffer, stepperCmd)) {
+        ResponseBuilder::sendError(ERR_COMM_MALFORMED_COMMAND, "Invalid STEPPER command format");
+        return;
+    }
+
+    if (stepperCmd.direction == STEPPER_DIR_STOP) {
+        RacingStepper::stop();
+        ResponseBuilder::sendOK();
+        return;
+    }
+
+    if (!ModeManager::isStepperCommandAllowed()) {
+        ResponseBuilder::sendError(ERR_STEPPER_MODE_NOT_RUNNING, "Racing stepper not allowed in current state");
+        return;
+    }
+
+    RacingStepper::start(stepperCmd.direction, stepperCmd.rate_hz);
+    ModeManager::updateCommandTime();
     ResponseBuilder::sendOK();
 }
 

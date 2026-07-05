@@ -49,6 +49,8 @@ CommandType SerialHandler::getCommandType(const char* cmdBuffer) {
         return CMD_MODE;
     } else if (strncmp(cmdBuffer, "SERVO", 5) == 0) {
         return CMD_SERVO;
+    } else if (strncmp(cmdBuffer, "STEPPER", 7) == 0) {
+        return CMD_STEPPER;
     }
     return CMD_UNKNOWN;
 }
@@ -63,7 +65,7 @@ GameMode SerialHandler::parseModeName(const char* modeName) {
 }
 
 bool SerialHandler::parseModeCommand(char* cmdBuffer, ModeCommand& cmd, GameMode& mode) {
-    // Expected format: "MODE,SET,VALORANT" or "MODE,START" or "MODE,STOP" or "MODE,STATUS"
+    // Expected format: "MODE,SET,VALORANT" or "MODE,START" or "MODE,STOP" or "MODE,RESET" or "MODE,STATUS"
     
     if (strncmp(cmdBuffer, "MODE,", 5) != 0) {
         return false;
@@ -81,6 +83,9 @@ bool SerialHandler::parseModeCommand(char* cmdBuffer, ModeCommand& cmd, GameMode
         return true;
     } else if (strcmp(ptr, "STOP") == 0) {
         cmd = MODE_CMD_STOP;
+        return true;
+    } else if (strcmp(ptr, "RESET") == 0) {
+        cmd = MODE_CMD_RESET;
         return true;
     } else if (strcmp(ptr, "STATUS") == 0) {
         cmd = MODE_CMD_STATUS;
@@ -147,5 +152,50 @@ bool SerialHandler::parseServoCommand(char* cmdBuffer, BatchServoCommand& servoC
         servoCmd.duration_ms = DEFAULT_MOVEMENT_DURATION_MS;
     }
     
+    return true;
+}
+
+bool SerialHandler::parseStepperCommand(char* cmdBuffer, StepperCommand& stepperCmd) {
+    // Expected format: "STEPPER,LEFT[,RATE_HZ]", "STEPPER,RIGHT[,RATE_HZ]", or "STEPPER,STOP"
+    if (strncmp(cmdBuffer, "STEPPER,", 8) != 0) {
+        return false;
+    }
+
+    char* ptr = cmdBuffer + 8;
+    char tempBuffer[SERIAL_BUFFER_SIZE];
+    strncpy(tempBuffer, ptr, SERIAL_BUFFER_SIZE - 1);
+    tempBuffer[SERIAL_BUFFER_SIZE - 1] = '\0';
+
+    char* token = strtok(tempBuffer, ",");
+    if (token == NULL) {
+        return false;
+    }
+
+    if (strcmp(token, "STOP") == 0) {
+        stepperCmd.direction = STEPPER_DIR_STOP;
+        stepperCmd.rate_hz = 0;
+        return true;
+    }
+
+    if (strcmp(token, "LEFT") == 0) {
+        stepperCmd.direction = STEPPER_DIR_LEFT;
+    } else if (strcmp(token, "RIGHT") == 0) {
+        stepperCmd.direction = STEPPER_DIR_RIGHT;
+    } else {
+        return false;
+    }
+
+    token = strtok(NULL, ",");
+    if (token == NULL || token[0] == '\0') {
+        stepperCmd.rate_hz = DEFAULT_STEPPER_RATE_HZ;
+        return true;
+    }
+
+    int rateHz = atoi(token);
+    if (rateHz < MIN_STEPPER_RATE_HZ || rateHz > MAX_STEPPER_RATE_HZ) {
+        return false;
+    }
+
+    stepperCmd.rate_hz = static_cast<uint16_t>(rateHz);
     return true;
 }

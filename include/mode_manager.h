@@ -22,6 +22,9 @@ public:
     
     // Stop the current game mode (MODE,STOP)
     static bool stopMode();
+
+    // Reset back to IDLE after stopping (MODE,RESET)
+    static bool resetToIdle();
     
     // Check timeout (call periodically in main loop)
     static void checkTimeout();
@@ -35,6 +38,9 @@ public:
     
     // Helper: Check if servo commands are allowed (only in RUNNING state)
     static bool isServoCommandAllowed();
+
+    // Helper: Check if racing stepper commands are allowed
+    static bool isStepperCommandAllowed();
     
 private:
     // Internal state transition handler

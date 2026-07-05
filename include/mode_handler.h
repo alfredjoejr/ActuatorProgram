@@ -3,6 +3,7 @@
 
 #include <Arduino.h>
 #include "protocol.h"
+#include "racing_stepper.h"
 
 class ModeHandler {
 public:

@@ -1,5 +1,7 @@
 #include "mode_manager.h"
 #include "response_builder.h"
+#include "mode_handler.h"
+#include "servo_controller.h"
 
 // Static member initialization
 ModeState ModeManager::currentState = STATE_IDLE;
@@ -45,8 +47,23 @@ bool ModeManager::stopMode() {
     if (currentState == STATE_IDLE) {
         return false;
     }
-    
-    return transitionTo(STATE_STOPPED);
+
+    if (!transitionTo(STATE_STOPPED)) {
+        return false;
+    }
+
+    ModeHandler::onModeStop(currentMode);
+    ServoController::moveToNeutral();
+    return true;
+}
+
+bool ModeManager::resetToIdle() {
+    if (currentState != STATE_STOPPED) {
+        return false;
+    }
+
+    currentMode = MODE_NONE;
+    return transitionTo(STATE_IDLE);
 }
 
 void ModeManager::checkTimeout() {
@@ -78,6 +95,10 @@ void ModeManager::updateCommandTime() {
 
 bool ModeManager::isServoCommandAllowed() {
     return (currentState == STATE_RUNNING);
+}
+
+bool ModeManager::isStepperCommandAllowed() {
+    return (currentState == STATE_RUNNING && currentMode == MODE_RACING);
 }
 
 bool ModeManager::transitionTo(ModeState newState) {

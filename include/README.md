@@ -2,7 +2,7 @@
 
 ## Overview
 
-ESP32-based firmware for controlling 5 servo motors to play Valorant via a gaming controller. The system uses serial communication from a PC-based game logic program to receive commands and control the servos with smooth interpolation.
+ESP32-based firmware for controlling game inputs through serial commands from a PC-based game logic program. It currently supports Valorant servo control and racing-mode stepper steering, with smooth interpolation for servos and non-blocking pulse generation for the stepper.
 
 ## Architecture
 
@@ -12,9 +12,10 @@ ESP32-based firmware for controlling 5 servo motors to play Valorant via a gamin
 PC Game Logic + GUI
     ↓ (Serial/USB)
 ESP32 Firmware
-    ├─ Serial Input Handler (parse MODE and SERVO commands)
+  ├─ Serial Input Handler (parse MODE, SERVO, and STEPPER commands)
     ├─ Mode Manager (state machine)
     ├─ Servo Controller (PWM + smooth movement)
+  ├─ Racing Stepper Controller (DIR + STEP pulses)
     ├─ Mode Handler (mode-specific logic)
     └─ Response Builder (feedback to PC)
     ↓ (PWM signals)
@@ -45,8 +46,10 @@ Control game mode from GUI:
 
 ```
 MODE,SET,VALORANT\n     # Set game to VALORANT mode
+MODE,SET,RACING\n       # Set game to RACING mode
 MODE,START\n            # Start the game (transition to RUNNING)
 MODE,STOP\n             # Stop the game (return to neutral)
+MODE,RESET\n           # Return to IDLE so another game mode can be selected
 MODE,STATUS\n           # Request current status
 ```
 
@@ -69,6 +72,24 @@ Example:
   SERVO,90,90,90,90,0,200\n     # Center all, trigger unpressed, move over 200ms
 ```
 
+#### 3. Stepper Commands (PC → ESP32)
+
+Use these in racing mode to rotate the steering wheel until you stop it:
+
+```
+STEPPER,LEFT[,RATE_HZ]\n      # Rotate steering wheel left continuously
+STEPPER,RIGHT[,RATE_HZ]\n     # Rotate steering wheel right continuously
+STEPPER,STOP\n               # Stop stepper output immediately
+```
+
+Examples:
+
+```
+STEPPER,LEFT,400\n
+STEPPER,RIGHT,600\n
+STEPPER,STOP\n
+```
+
 ### Response Messages (ESP32 → PC)
 
 ```
@@ -87,6 +108,9 @@ DEBUG,<MESSAGE>\n                 # Debug information (optional)
 - `201`: SERVO command sent but mode not RUNNING
 - `202`: Incomplete servo command
 - `203`: Invalid duration parameter
+- `204`: Stepper command sent but mode not RUNNING in RACING
+- `205`: Reserved for future stepper direction validation
+- `206`: Reserved for future stepper speed validation
 - `300`: Malformed command
 - `301`: Unknown command type
 - `302`: Serial buffer overflow
@@ -109,6 +133,22 @@ DEBUG,<MESSAGE>\n                 # Debug information (optional)
 [Stop Game]
 → MODE,STOP\n
 ← STATUS,VALORANT,STOPPED\n
+
+[Reset to IDLE]
+→ MODE,RESET\n
+← STATUS,NONE,IDLE\n
+
+[Switch to Other Game]
+→ MODE,SET,RACING\n
+← STATUS,RACING,MODE_SET\n
+→ MODE,START\n
+← STATUS,RACING,RUNNING\n
+
+[Race Steering]
+→ STEPPER,LEFT,400\n
+← OK\n
+→ STEPPER,STOP\n
+← OK\n
 ```
 
 ## Servo Configuration
@@ -140,6 +180,7 @@ src/
 ├── mode_manager.cpp            # State machine logic
 ├── mode_handler.cpp            # Mode-specific callbacks
 ├── servo_controller.cpp        # PWM & servo control
+├── racing_stepper.cpp          # Stepper steering control
 └── servo_config.cpp            # Servo calibration data
 
 include/
@@ -151,7 +192,7 @@ include/
 ├── servo_controller.h          # Servo control interface
 ├── servo_config.h              # Servo configuration
 ├── mode_config.h               # Mode configurations
-├── racing_stepper.h            # [STUB] Racing mode stepper
+├── racing_stepper.h            # Racing stepper interface
 └── racing_paddle.h             # [STUB] Racing mode paddles
 ```
 
@@ -160,9 +201,10 @@ include/
 ✅ **Modular Design**: Clean separation of concerns  
 ✅ **Smooth Interpolation**: Configurable movement duration  
 ✅ **State Protection**: SERVO commands only in RUNNING state  
+✅ **Racing Mode Support**: Stepper steering with START/STOP/RESET flow  
 ✅ **Timeout Detection**: Automatic neutral on 5s inactivity  
 ✅ **Error Feedback**: Detailed error codes to PC  
-✅ **Future-Ready**: Placeholder stubs for racing mode  
+✅ **Reset Flow**: MODE,RESET returns to IDLE so the GUI can switch games  
 ✅ **Non-blocking**: Uses timer-based interpolation
 
 ## Safety Features
@@ -172,6 +214,8 @@ include/
 3. **Range Validation**: All servo positions validated (0-180°)
 4. **State Gating**: SERVO commands rejected unless mode RUNNING
 5. **Neutral Fallback**: MODE,STOP moves all servos to neutral
+6. **Game Switch Reset**: MODE,RESET returns the controller to IDLE so the GUI can select another mode
+7. **Stepper Gating**: STEPPER commands are only accepted in `MODE_RACING` while RUNNING
 
 ## Testing Checklist
 
@@ -181,17 +225,75 @@ include/
 - [ ] SERVO commands → servos move smoothly
 - [ ] Duration parameter → servos move over specified time
 - [ ] MODE,STOP → servos return to neutral
+- [ ] MODE,RESET → returns to IDLE
 - [ ] SERVO command in non-RUNNING state → ERR,201
+- [ ] MODE,SET,RACING → returns correct STATUS
+- [ ] STEPPER,LEFT / STEPPER,RIGHT → rotates steering wheel
+- [ ] STEPPER,STOP → stops motor immediately
 - [ ] Invalid angle (>180) → ERR,200
 - [ ] Timeout after 5s inactivity → auto-neutral
+
+## PC Test Code
+
+Use this quick Python script to test the serial protocol from your PC.
+
+### Requirements
+
+- Python 3
+- `pyserial` installed: `pip install pyserial`
+- ESP32 connected on the same COM port used by the script
+
+If you do not have Python installed, you can still test the same command flow from the VS Code serial monitor or any terminal program that can send newline-terminated text.
+
+### Example Script
+
+```python
+import time
+import serial
+
+PORT = "COM5"  # Change to your ESP32 port
+BAUD = 115200
+
+with serial.Serial(PORT, BAUD, timeout=1) as ser:
+  time.sleep(2)
+
+  def send(cmd):
+    print(f"> {cmd}")
+    ser.write((cmd + "\n").encode())
+    response = ser.readline().decode(errors="ignore").strip()
+    if response:
+      print(f"< {response}")
+
+  send("MODE,SET,RACING")
+  send("MODE,START")
+  time.sleep(1)
+  send("STEPPER,LEFT,400")
+  time.sleep(2)
+  send("STEPPER,STOP")
+  send("MODE,STOP")
+  send("MODE,RESET")
+  send("MODE,SET,VALORANT")
+  send("MODE,START")
+```
+
+### Test Sequence
+
+1. Open the serial port at 115200 baud.
+2. Send `MODE,SET,RACING` and confirm `STATUS,RACING,MODE_SET`.
+3. Send `MODE,START` and confirm `STATUS,RACING,RUNNING`.
+4. Send `STEPPER,LEFT,400` and verify the stepper turns left.
+5. Send `STEPPER,STOP` and verify the stepper stops.
+6. Send `MODE,STOP` then `MODE,RESET`.
+7. Select the next mode with `MODE,SET,VALORANT` or `MODE,SET,RACING`.
 
 ## Future Extensions
 
 ### Racing Mode (Ready to implement)
 
-- [ ] Stepper motor control for steering wheel
+- [x] Stepper motor control for steering wheel
 - [ ] 2 paddle servo motors for gas/brake
-- [ ] MODE,SET,RACING support
+- [x] MODE,SET,RACING support
+- [x] MODE,RESET support
 - [ ] Merge with VALORANT mode in mode manager
 
 ### Additional Features

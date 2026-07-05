@@ -30,6 +30,9 @@ public:
     
     // Parse SERVO command: "SERVO,90,90,90,90,0,200"
     static bool parseServoCommand(char* cmdBuffer, BatchServoCommand& servoCmd);
+
+    // Parse STEPPER command: "STEPPER,LEFT[,RATE_HZ]" or "STEPPER,STOP"
+    static bool parseStepperCommand(char* cmdBuffer, StepperCommand& stepperCmd);
     
     // Detect command type from buffer
     static CommandType getCommandType(const char* cmdBuffer);

@@ -35,9 +35,9 @@ void ModeHandler::onValorantStop() {
 }
 
 void ModeHandler::onRacingStart() {
-    // TODO: Racing-specific initialization (stepper motor, paddle servos)
+    RacingStepper::stop();
 }
 
 void ModeHandler::onRacingStop() {
-    // TODO: Racing-specific cleanup
+    RacingStepper::stop();
 }
